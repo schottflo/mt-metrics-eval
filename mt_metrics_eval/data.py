@@ -22,8 +22,8 @@ import sys
 import tarfile
 from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple
 import urllib.request
-from mt_metrics_eval import meta_info
-from mt_metrics_eval import stats
+import meta_info
+import stats
 import numpy as np
 import glob
 
@@ -258,7 +258,7 @@ class EvalSet:
     if not sys_names.issubset(gold_scores):
       raise ValueError(f'Missing gold scores: {sys_names - set(gold_scores)}')
 
-    all_gold_scores, all_metric_scores = [], []
+    all_gold_scores, all_metric_scores, all_sys_names = [], [], []
     for sys_name in sys_names:
       gscores, mscores = gold_scores[sys_name], metric_scores[sys_name]
       if len(gscores) != len(mscores):
@@ -266,7 +266,8 @@ class EvalSet:
                          (sys_name, len(gscores), len(mscores)))
       all_gold_scores.extend(gscores)
       all_metric_scores.extend(mscores)
-    return stats.Correlation(len(sys_names), all_gold_scores, all_metric_scores)
+      all_sys_names.append(sys_name)
+    return stats.Correlation(len(sys_names), all_gold_scores, all_metric_scores, all_sys_names)
 
   def ParseHumanScoreFilename(self, filename):
     """Parse a human-score filename into lang, name, and level components."""
@@ -409,6 +410,8 @@ class EvalSet:
 
     self._metric_names = set()
     self._metric_basenames = set()
+    #import pdb
+    #pdb.set_trace()
     if read_stored_metric_scores:
       for md in metric_scores_paths:
         md = os.path.join(md, name)
@@ -714,7 +717,7 @@ def CompareMetrics(
 
 
 def CompareMetricsWithGlobalAccuracy(
-    evs_list: List[EvalSet],
+    evs_dict: Dict[str, EvalSet],
     main_refs_list: List[Set[str]],
     close_refs_list: List[Set[str]],
     include_human: bool,
@@ -726,6 +729,7 @@ def CompareMetricsWithGlobalAccuracy(
     psd: stats.PermutationSigDiffParams = stats.PermutationSigDiffParams(),
     pval: float = 0.05,
     extern_metrics_list: List[Dict[str, Dict[str, List[float]]]] = None,
+    relevant_sys_pairs: Dict[str, List[Tuple[str]]] = None,
     )-> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
   """Compare a set of metrics using accuracy.
 
@@ -763,35 +767,39 @@ def CompareMetricsWithGlobalAccuracy(
     Tuple of (metric->(corr,rank), significance matrix). This is in the same
       format as CompareMetrics, except that metrics are DisplayName versions.
   """
+  evs_list = evs_dict.values()
+
   corrs, base_metrics = [], []
   if extern_metrics_list is None:
     extern_metrics_list = [None] * len(evs_list)
   for evs, main_refs, close_refs, extern_metrics in zip(
-      evs_list, main_refs_list, close_refs_list, extern_metrics_list):
-    corrs.append(GetCorrelations(
-        evs, 'sys', main_refs, close_refs, include_human, include_outliers,
-        gold_name, primary_metrics, domain, extern_metrics))
-    base_metrics.append({evs.DisplayName(m): m for m in corrs[-1]})
+      evs_dict.items(), main_refs_list, close_refs_list, extern_metrics_list):
+    corrs.append((evs[0], GetCorrelations(
+        evs[1], 'sys', main_refs, close_refs, include_human, include_outliers,
+        gold_name, primary_metrics, domain, extern_metrics)))
+    base_metrics.append({evs[1].DisplayName(m): m for m in corrs[-1][1]})
 
   # Merge correlations across eval-sets, recording number of systems for each.
-  num_sys_per_evs = [list(c.values())[0].num_sys for c in corrs]
-  num_sys = sum(num_sys_per_evs)
+  num_sys_per_evs = [(name, list(c.values())[0].num_sys) for name, c in corrs]
+  num_sys = sum([num_sys_per_ev for _, num_sys_per_ev in num_sys_per_evs])
   merged_corrs = {}
   for base_metric in set.intersection(*(set(b) for b in base_metrics)):
-    gold_scores, metric_scores = [], []
-    for c, metric_map in zip(corrs, base_metrics):
+    gold_scores, metric_scores, sys_names = [], [], []
+    for c_tuple, metric_map in zip(corrs, base_metrics):
+      _, c = c_tuple
       metric = metric_map[base_metric]
       gold_scores.extend(c[metric].gold_scores)
       metric_scores.extend(c[metric].metric_scores)
+      sys_names.extend(c[metric].sys_names)
     assert len(gold_scores) == num_sys, (len(gold_scores), num_sys)
     merged_corrs[base_metric] = stats.Correlation(
-        num_sys, gold_scores, metric_scores)
+        num_sys, gold_scores, metric_scores, sys_names=sys_names)
 
   # Aggregated pairwise accuracy
-  def _Accuracy(vect1, vect2):
+  def _Accuracy(vect1, vect2, sys_names=None, relevant_sys_pairs=None):
     acc, num_pairs, b = 0, 0, 0
-    for n in num_sys_per_evs:
-      a, p = stats.Agreement(vect1[b: b + n], vect2[b: b + n])
+    for name, n in num_sys_per_evs:
+      a, p = stats.Agreement(vect1[b: b + n], vect2[b: b + n], sys_names[b: b + n], relevant_sys_pairs[name])
       acc += a
       num_pairs += p
       b += n
@@ -800,13 +808,13 @@ def CompareMetricsWithGlobalAccuracy(
   # Compute metric correlations, ordered by decreasing correlation.
   corrs_and_ranks = {}
   for m, c in merged_corrs.items():
-    corrs_and_ranks[m] = [_Accuracy(c.gold_scores, c.metric_scores)[0], 0]
+    corrs_and_ranks[m] = [_Accuracy(c.gold_scores, c.metric_scores, c.sys_names, relevant_sys_pairs)[0], 0]
   corrs_and_ranks = dict(
       sorted(corrs_and_ranks.items(), key=lambda x: -x[1][0]))
 
   # Compute significance matrix and determine ranks.
   sig_matrix = ComputeSigMatrix(
-      merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, psd, False)
+      merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, psd, False, relevant_sys_pairs=relevant_sys_pairs)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
@@ -822,6 +830,7 @@ def ComputeSigMatrix(
     k: int,
     psd: stats.PermutationSigDiffParams,
     replace_nans_with_zeros: bool,
+    relevant_sys_pairs: Dict[str, List[Tuple[str]]] = None,
     **corr_fcn_args,
 ) -> np.ndarray:
   """Populate significance matrix using PermutationSigDiff with given args."""
@@ -833,9 +842,20 @@ def ComputeSigMatrix(
     m1 = list(corrs_and_ranks)[i]
     for j in range(i + 1, n):
       m2 = list(corrs_and_ranks)[j]
-      pval, _, _ = stats.PermutationSigDiff(
+      if relevant_sys_pairs is not None:
+        pval, _, _ = stats.PermutationSigDiff(
           metric_corrs[m2], metric_corrs[m1], corr_fcn, average_by, k,
-          psd, replace_nans_with_zeros, **corr_fcn_args)
+          psd, replace_nans_with_zeros, 
+          # necessary extra arguments for GlobalAccuracy
+          sys_names=metric_corrs[m1].sys_names, 
+          relevant_sys_pairs=relevant_sys_pairs, 
+          **corr_fcn_args)
+      else:
+        pval, _, _ = stats.PermutationSigDiff(
+          metric_corrs[m2], metric_corrs[m1], corr_fcn, average_by, k,
+          psd, replace_nans_with_zeros, 
+          **corr_fcn_args)
+
       sig_matrix[i, j] = pval
   return sig_matrix
 
