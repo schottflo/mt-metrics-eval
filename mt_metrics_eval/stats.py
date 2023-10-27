@@ -31,7 +31,7 @@ import itertools
 import math
 from typing import Any, Callable, List, Optional, Tuple
 import warnings
-import tau_optimization
+from mt_metrics_eval import tau_optimization
 import numpy as np
 import numpy.typing
 import scipy.special

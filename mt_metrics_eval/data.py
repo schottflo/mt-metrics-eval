@@ -22,8 +22,8 @@ import sys
 import tarfile
 from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple
 import urllib.request
-import meta_info
-import stats
+from mt_metrics_eval import meta_info
+from mt_metrics_eval import stats
 import numpy as np
 import glob
 
