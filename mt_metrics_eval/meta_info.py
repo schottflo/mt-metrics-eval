@@ -70,7 +70,18 @@ WMT22_NODOMAIN = MetaInfo(
     {'sys': 'wmt-appraise', 'seg': 'wmt-appraise'},
     set(), WMT22_PRIMARIES)
 
+NTREX_PRIMARIES = {'BLEU', 'CHRF', 'COMET-22'}
+
+NTREX_DA = MetaInfo(
+    'refA',
+    {'sys': 'ntrex-128', 'seg': 'ntrex-128'}, set(),
+    NTREX_PRIMARIES)
+
 DATA = {
+    'ntrex-128': {
+        'en-gsw_zh': NTREX_DA,
+        'en-gsw_be': NTREX_DA,
+    },
     'wmt22': {
         'en-de': dataclasses.replace(WMT22, outlier_systems={'M2M100_1.2B-B4'}),
         'en-ru': WMT22,
