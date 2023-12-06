@@ -64,7 +64,7 @@ class Correlation:
   options; use that class directly if you need those.
   """
 
-  def __init__(self, num_sys, gold_scores, metric_scores):
+  def __init__(self, num_sys, gold_scores, metric_scores, sys_names=None):
     """Construct from parallel vectors that group scores by system."""
     self.num_sys = num_sys
     self.num_items = len(gold_scores) // num_sys  # item is seg, doc, or set
@@ -72,6 +72,7 @@ class Correlation:
     self.gold_scores = gold_scores
     self.metric_scores = metric_scores
     self.none_count = gold_scores.count(None)
+    self.sys_names = sys_names
 
   def AverageCorrelation(
       self,
@@ -226,12 +227,21 @@ def KendallLike(
   return corr, 0, num_pairs, concordant, discordant
 
 
-def Agreement(gold_vect, metric_vect):
+def Agreement(gold_vect, metric_vect, sys_names=None, relevant_sys_pairs=None):
   """Pairwise agreement over gold and metric vectors."""
   agree, num_pairs = 0, 0
-  for a, b in itertools.combinations(zip(gold_vect, metric_vect), 2):
+
+  zipped_lists = zip(gold_vect, metric_vect, sys_names) if sys_names is not None else zip(gold_vect, metric_vect)
+
+  for a, b in itertools.combinations(zipped_lists, 2):
+
     if a[0] is None or b[0] is None:
       continue
+    
+    # NEW: Skip pairs which are not relevant
+    if a[2] is not None and (a[2], b[2]) not in relevant_sys_pairs:
+      continue
+
     agree += np.sign(a[0] - b[0]) == np.sign(a[1] - b[1])
     num_pairs += 1
   return agree, num_pairs

@@ -27,6 +27,10 @@ install_requires = [
     "numpy",
     "scipy",
     "absl-py",
+    "sacrebleu==2.3.0",
+    "pandas==2.0.3",
+    "ipykernel==6.25.1",
+    "seaborn==0.12.2",
 ]
 
 setuptools.setup(
