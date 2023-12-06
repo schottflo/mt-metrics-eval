@@ -27,6 +27,7 @@ install_requires = [
     "numpy",
     "scipy",
     "absl-py",
+    "unbabel-comet",
     "sacrebleu==2.3.0",
     "pandas==2.0.3",
     "ipykernel==6.25.1",
